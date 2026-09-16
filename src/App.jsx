@@ -21,7 +21,7 @@ const MAX_SPEED = 900             // px/s — terminal velocity
 const FRICTION = 0.92             // per frame velocity multiplier — smooth deceleration
 const MERCY_AFTER = 250           // frames of evasion before surrender (~4s)
 
-function RunawayButton({ children, onCatch, initialCenterX, initialCenterY }) {
+function RunawayButton({ children, onCatch, yesButtonRef }) {
   const btnRef = useRef(null)
   const containerRef = useRef(null)
   const [caught, setCaught] = useState(false)
@@ -36,21 +36,29 @@ function RunawayButton({ children, onCatch, initialCenterX, initialCenterY }) {
     animId: null,
   })
 
-  // Place button at center once we know container dimensions
+  // Place button right next to the Yes button on mount
   useEffect(() => {
     const container = containerRef.current
     const btn = btnRef.current
     if (!container || !btn) return
 
-    const cRect = container.getBoundingClientRect()
-    const bRect = btn.getBoundingClientRect()
-    const x = (cRect.width - bRect.width) / 2
-    const y = (cRect.height - bRect.height) / 2
+    let x, y
+    if (yesButtonRef?.current) {
+      const yesRect = yesButtonRef.current.getBoundingClientRect()
+      const cRect = container.getBoundingClientRect()
+      x = yesRect.right - cRect.left + 16
+      y = yesRect.top - cRect.top
+    } else {
+      // fallback: center of viewport
+      const cRect = container.getBoundingClientRect()
+      x = (cRect.width - btn.offsetWidth) / 2
+      y = (cRect.height - btn.offsetHeight) / 2
+    }
     physics.current.x = x
     physics.current.y = y
     btn.style.left = `${x}px`
     btn.style.top = `${y}px`
-  }, [])
+  }, [yesButtonRef])
 
   // Main physics loop
   useEffect(() => {
@@ -114,12 +122,11 @@ function RunawayButton({ children, onCatch, initialCenterX, initialCenterY }) {
       p.x += p.vx * dt
       p.y += p.vy * dt
 
-      // Bounce off container walls
-      const pad = 8
-      if (p.x < pad) { p.x = pad; p.vx = Math.abs(p.vx) * 0.6 }
-      if (p.y < pad) { p.y = pad; p.vy = Math.abs(p.vy) * 0.6 }
-      if (p.x > cRect.width - bw - pad) { p.x = cRect.width - bw - pad; p.vx = -Math.abs(p.vx) * 0.6 }
-      if (p.y > cRect.height - bh - pad) { p.y = cRect.height - bh - pad; p.vy = -Math.abs(p.vy) * 0.6 }
+      // Wrap around viewport edges (pac-man style)
+      if (p.x + bw < 0) p.x = cRect.width
+      else if (p.x > cRect.width) p.x = -bw
+      if (p.y + bh < 0) p.y = cRect.height
+      else if (p.y > cRect.height) p.y = -bh
 
       // Apply to DOM directly — no React re-render
       btn.style.left = `${p.x}px`
@@ -224,6 +231,7 @@ function App() {
   const [answered, setAnswered] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
   const [yesClicks, setYesClicks] = useState(0)
+  const yesButtonRef = useRef(null)
 
   const handleYes = () => {
     setAnswered(true)
@@ -260,10 +268,10 @@ function App() {
           </div>
         ) : (
           <div className="buttons-row">
-            <button className="btn btn-answer btn-yes" onClick={handleYes}>
+            <button ref={yesButtonRef} className="btn btn-answer btn-yes" onClick={handleYes}>
               Yes! ✅
             </button>
-            <RunawayButton onCatch={handleNoCatch}>
+            <RunawayButton onCatch={handleNoCatch} yesButtonRef={yesButtonRef}>
               No ❌
             </RunawayButton>
           </div>
