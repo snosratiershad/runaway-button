@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import './App.css'
 
 const QUESTIONS = [
@@ -14,225 +14,186 @@ const QUESTIONS = [
   "Do you think cats are cute?",
 ]
 
-// Physics constants
-const DANGER_RADIUS = 220
-const FLEE_ACCELERATION = 2800
-const MAX_SPEED = 900
-const FRICTION = 0.92
-const MERCY_AFTER = 250
+// Physics
+const DANGER = 250
+const ACCEL  = 3000
+const SPEED  = 1000
+const FRIC   = 0.93
+const MERCY  = 300
 
-function RunawayButton({ children, onCatch, placeholderRef }) {
+function RunawayButton({ onCatch, ghostRef }) {
   const btnRef = useRef(null)
-  const containerRef = useRef(null)
   const [caught, setCaught] = useState(false)
 
-  const physics = useRef({
+  const S = useRef({
     x: 0, y: 0,
     vx: 0, vy: 0,
-    cx: -1000, cy: -1000,
-    animId: null,
-    mercyCount: 0,
-    frameCount: 0,
+    mx: -9999, my: -9999,
+    mercy: 0,
+    t: 0,
+    started: false,
   })
 
-  // Place button on the empty placeholder slot on mount
+  // Snap button to ghost placeholder on mount
   useEffect(() => {
+    const ghost = ghostRef?.current
     const btn = btnRef.current
-    if (!btn || !placeholderRef?.current) return
+    if (!ghost || !btn) return
+    requestAnimationFrame(() => {
+      const r = ghost.getBoundingClientRect()
+      S.current.x = r.left
+      S.current.y = r.top
+      btn.style.left = r.left + 'px'
+      btn.style.top = r.top + 'px'
+      S.current.started = true
+    })
+  }, [ghostRef])
 
-    const pRect = placeholderRef.current.getBoundingClientRect()
-    physics.current.x = pRect.left
-    physics.current.y = pRect.top
-    btn.style.left = `${pRect.left}px`
-    btn.style.top = `${pRect.top}px`
-  }, [placeholderRef])
-
-  // Main physics loop
+  // Physics loop
   useEffect(() => {
     const btn = btnRef.current
     if (!btn || caught) return
-    const p = physics.current
+    const s = S.current
 
-    let lastTime = null
-
+    let last = null
     const tick = (now) => {
-      if (!lastTime) lastTime = now
-      const dt = Math.min((now - lastTime) / 1000, 0.05)
-      lastTime = now
+      if (last === null) { last = now; s.raf = requestAnimationFrame(tick); return }
+      const dt = Math.min((now - last) / 1000, 0.05)
+      last = now
+
+      if (!s.started) { s.raf = requestAnimationFrame(tick); return }
 
       const vw = window.innerWidth
       const vh = window.innerHeight
       const bw = btn.offsetWidth
       const bh = btn.offsetHeight
 
-      const bcx = p.x + bw / 2
-      const bcy = p.y + bh / 2
+      const cx = s.x + bw / 2
+      const cy = s.y + bh / 2
+      const dx = cx - s.mx
+      const dy = cy - s.my
+      const dist = Math.sqrt(dx * dx + dy * dy)
 
-      const dx = bcx - p.cx
-      const dy = bcy - p.cy
-      const dist = Math.hypot(dx, dy)
-
-      if (dist < DANGER_RADIUS && dist > 0) {
+      if (dist < DANGER && dist > 0.1) {
         const nx = dx / dist
         const ny = dy / dist
-        const urgency = 1 - (dist / DANGER_RADIUS)
-        const accel = FLEE_ACCELERATION * (0.6 + urgency * 0.4)
-        p.vx += nx * accel * dt
-        p.vy += ny * accel * dt
+        const urgency = 1 - dist / DANGER
+        const a = ACCEL * (0.4 + urgency * 0.6)
+        s.vx += nx * a * dt
+        s.vy += ny * a * dt
 
-        p.frameCount++
-        if (p.frameCount % 5 === 0) {
-          p.mercyCount++
-          if (p.mercyCount >= MERCY_AFTER) {
-            setCaught(true)
-            return
-          }
+        s.mercy++
+        if (s.mercy >= MERCY) {
+          setCaught(true)
+          return
         }
       }
 
-      p.vx *= FRICTION
-      p.vy *= FRICTION
-
-      const speed = Math.hypot(p.vx, p.vy)
-      if (speed > MAX_SPEED) {
-        p.vx = (p.vx / speed) * MAX_SPEED
-        p.vy = (p.vy / speed) * MAX_SPEED
+      s.vx *= FRIC
+      s.vy *= FRIC
+      const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
+      if (spd > SPEED) {
+        s.vx = (s.vx / spd) * SPEED
+        s.vy = (s.vy / spd) * SPEED
       }
 
-      p.x += p.vx * dt
-      p.y += p.vy * dt
+      s.x += s.vx * dt
+      s.y += s.vy * dt
 
-      // Wrap around immediately — modular arithmetic, no stuck edges
-      p.x = ((p.x + bw) % vw + vw) % vw - bw
-      p.y = ((p.y + bh) % vh + vh) % vh - bh
+      // Wrap: as soon as trailing edge passes boundary, reappear on other side
+      if (s.x + bw < 0)
+        s.x = vw - 4
+      else if (s.x > vw)
+        s.x = -bw + 4
+      if (s.y + bh < 0)
+        s.y = vh - 4
+      else if (s.y > vh)
+        s.y = -bh + 4
 
-      btn.style.left = `${p.x}px`
-      btn.style.top = `${p.y}px`
-
-      p.animId = requestAnimationFrame(tick)
+      btn.style.left = s.x + 'px'
+      btn.style.top = s.y + 'px'
+      s.raf = requestAnimationFrame(tick)
     }
 
-    p.animId = requestAnimationFrame(tick)
+    s.raf = requestAnimationFrame(tick)
 
-    const onMouse = (e) => {
-      p.cx = e.clientX
-      p.cy = e.clientY
-    }
-
+    const onMouse = (e) => { s.mx = e.clientX; s.my = e.clientY }
     const onTouch = (e) => {
       const touch = e.touches[0]
-      if (!touch) return
-      p.cx = touch.clientX
-      p.cy = touch.clientY
+      if (touch) { s.mx = touch.clientX; s.my = touch.clientY }
     }
 
     window.addEventListener('mousemove', onMouse, { passive: true })
-    window.addEventListener('touchmove', onTouch, { passive: true })
     window.addEventListener('touchstart', onTouch, { passive: true })
+    window.addEventListener('touchmove', onTouch, { passive: true })
 
     return () => {
-      cancelAnimationFrame(p.animId)
+      cancelAnimationFrame(s.raf)
       window.removeEventListener('mousemove', onMouse)
-      window.removeEventListener('touchmove', onTouch)
       window.removeEventListener('touchstart', onTouch)
+      window.removeEventListener('touchmove', onTouch)
     }
   }, [caught])
 
-  const handleClick = useCallback(() => {
-    if (caught && onCatch) onCatch()
-  }, [caught, onCatch])
+  const onClick = useCallback(() => { if (caught && onCatch) onCatch() }, [caught, onCatch])
 
   return (
     <button
       ref={btnRef}
       className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
-      style={{ position: 'fixed' }}
-      onClick={handleClick}
+      style={{ position: 'absolute' }}
+      onClick={onClick}
     >
-      {children}
+      No ❌
     </button>
   )
 }
 
-function CelebrationScreen({ onRestart }) {
-  const [particles, setParticles] = useState([])
-
-  useEffect(() => {
-    const emojis = ['🎉', '✨', '💖', '🎊', '🌟', '💫', '🎈', '🥳']
-    const newParticles = Array.from({ length: 30 }, (_, i) => ({
-      id: i,
-      emoji: emojis[i % emojis.length],
-      left: Math.random() * 100,
-      delay: Math.random() * 2,
-      duration: 2 + Math.random() * 3,
+function Celebration({ onRestart }) {
+  const [particles] = useState(() => {
+    const e = ['🎉','✨','💖','🎊','🌟','💫','🎈','🥳']
+    return Array.from({ length: 30 }, (_, i) => ({
+      id: i, emoji: e[i % e.length], left: Math.random()*100,
+      delay: Math.random()*2, dur: 2+Math.random()*3,
     }))
-    setParticles(newParticles)
-  }, [])
+  })
 
   return (
     <div className="celebration">
       <div className="particles">
-        {particles.map(p => (
-          <span
-            key={p.id}
-            className="particle"
-            style={{
-              left: `${p.left}%`,
-              animationDelay: `${p.delay}s`,
-              animationDuration: `${p.duration}s`,
-            }}
-          >
-            {p.emoji}
-          </span>
-        ))}
+        {particles.map(p => <span key={p.id} className="particle" style={{
+          left: p.left+'%', animationDelay: p.delay+'s', animationDuration: p.dur+'s',
+        }}>{p.emoji}</span>)}
       </div>
       <h1>🎉 YAY! 🎉</h1>
       <p className="celebration-text">You finally caught it!</p>
       <p className="celebration-sub">Knew you'd say yes eventually 😏</p>
-      <button className="btn btn-restart" onClick={onRestart}>
-        Ask me again!
-      </button>
+      <button className="btn btn-restart" onClick={onRestart}>Ask me again!</button>
     </div>
   )
 }
 
-function App() {
-  const [questionIndex, setQuestionIndex] = useState(() =>
-    Math.floor(Math.random() * QUESTIONS.length)
-  )
+export default function App() {
+  const [qIdx, setQIdx] = useState(() => Math.floor(Math.random() * QUESTIONS.length))
   const [answered, setAnswered] = useState(false)
-  const [showCelebration, setShowCelebration] = useState(false)
-  const [yesClicks, setYesClicks] = useState(0)
-  const placeholderRef = useRef(null)
+  const [done, setDone] = useState(false)
+  const [yesCount, setYesCount] = useState(0)
+  const ghostRef = useRef(null)
 
-  const handleYes = () => {
-    setAnswered(true)
-    setYesClicks(c => c + 1)
-    setTimeout(() => {
-      setAnswered(false)
-      setQuestionIndex(prev => (prev + 1) % QUESTIONS.length)
-    }, 2000)
-  }
+  const next = () => { setAnswered(false); setQIdx(i => (i+1) % QUESTIONS.length) }
+  const onYes = () => { setAnswered(true); setYesCount(c => c+1); setTimeout(next, 2000) }
 
-  const handleNoCatch = () => {
-    setShowCelebration(true)
-  }
-
-  const handleRestart = () => {
-    setShowCelebration(false)
-    setAnswered(false)
-    setQuestionIndex(prev => (prev + 1) % QUESTIONS.length)
-  }
-
-  if (showCelebration) {
-    return <CelebrationScreen onRestart={handleRestart} />
-  }
+  if (done) return <Celebration onRestart={() => { setDone(false); next() }} />
 
   return (
     <div className="app">
-      <div className="card">
-        <h1 className="question">{QUESTIONS[questionIndex]}</h1>
+      {/* Fixed overlay — button roams the whole viewport from here */}
+      <div className="runaway-overlay">
+        {!answered && <RunawayButton onCatch={() => setDone(true)} ghostRef={ghostRef} />}
+      </div>
 
+      <div className="card">
+        <h1 className="question">{QUESTIONS[qIdx]}</h1>
         {answered ? (
           <div className="answer-response">
             <span className="answer-emoji">🥰</span>
@@ -240,33 +201,14 @@ function App() {
           </div>
         ) : (
           <div className="buttons-row">
-            <button className="btn btn-answer btn-yes" onClick={handleYes}>
-              Yes! ✅
-            </button>
-            {/* Invisible placeholder that reserves space for No */}
-            <div ref={placeholderRef} className="btn btn-answer btn-placeholder">
-              No ❌
-            </div>
+            <button className="btn btn-answer btn-yes" onClick={onYes}>Yes! ✅</button>
+            <div ref={ghostRef} className="btn btn-answer btn-ghost">No ❌</div>
           </div>
         )}
-
-        {/* No button lives here — renders as fixed over the placeholder */}
-        {!answered && (
-          <RunawayButton onCatch={handleNoCatch} placeholderRef={placeholderRef}>
-            No ❌
-          </RunawayButton>
-        )}
-
-        {yesClicks > 0 && (
-          <p className="score">Yes answers: {yesClicks} 🏆</p>
-        )}
+        {yesCount > 0 && <p className="score">Yes answers: {yesCount} 🏆</p>}
       </div>
 
-      <footer className="footer">
-        <p>Try clicking "No" if you dare 😈</p>
-      </footer>
+      <footer className="footer"><p>Try clicking "No" if you dare 😈</p></footer>
     </div>
   )
 }
-
-export default App
