@@ -15,11 +15,11 @@ const QUESTIONS = [
 ]
 
 // Physics
-const DANGER = 250
-const ACCEL  = 3000
-const SPEED  = 1000
-const FRIC   = 0.93
-const MERCY  = 300
+const DANGER    = 300      // flee trigger radius (px)
+const ACCEL     = 2800     // base flee acceleration (px/s²)
+const MAX_SPEED = 1200     // max button speed (px/s)
+const FRIC      = 0.965    // per-frame friction — high = long coasting
+const MERCY     = 300      // frames before surrender
 
 function RunawayButton({ onCatch, ghostRef }) {
   const btnRef = useRef(null)
@@ -27,10 +27,11 @@ function RunawayButton({ onCatch, ghostRef }) {
 
   const S = useRef({
     x: 0, y: 0,
-    vx: 0, vy: 0,
-    mx: -9999, my: -9999,
+    vx: 0, vy: 0,           // button velocity
+    mx: -9999, my: -9999,   // current mouse pos
+    pmx: -9999, pmy: -9999, // previous mouse pos (for velocity)
+    prevTime: 0,            // last mouse event time
     mercy: 0,
-    t: 0,
     started: false,
   })
 
@@ -78,7 +79,16 @@ function RunawayButton({ onCatch, ghostRef }) {
         const nx = dx / dist
         const ny = dy / dist
         const urgency = 1 - dist / DANGER
-        const a = ACCEL * (0.4 + urgency * 0.6)
+
+        // Cursor speed — how fast the user is approaching
+        const cursorSpeed = Math.sqrt(
+          (s.mx - s.pmx) ** 2 + (s.my - s.pmy) ** 2
+        ) / Math.max((now - s.prevTime) / 1000, 0.001)
+        // Normalize cursor speed: 0 at rest, ~1 at fast flick (2000+ px/s)
+        const cursorFactor = Math.min(cursorSpeed / 2000, 1)
+
+        // Acceleration scales with proximity AND cursor approach speed
+        const a = ACCEL * (0.3 + urgency * 0.4 + cursorFactor * 0.3)
         s.vx += nx * a * dt
         s.vy += ny * a * dt
 
@@ -92,9 +102,9 @@ function RunawayButton({ onCatch, ghostRef }) {
       s.vx *= FRIC
       s.vy *= FRIC
       const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
-      if (spd > SPEED) {
-        s.vx = (s.vx / spd) * SPEED
-        s.vy = (s.vy / spd) * SPEED
+      if (spd > MAX_SPEED) {
+        s.vx = (s.vx / spd) * MAX_SPEED
+        s.vy = (s.vy / spd) * MAX_SPEED
       }
 
       s.x += s.vx * dt
@@ -117,10 +127,18 @@ function RunawayButton({ onCatch, ghostRef }) {
 
     s.raf = requestAnimationFrame(tick)
 
-    const onMouse = (e) => { s.mx = e.clientX; s.my = e.clientY }
+    const onMouse = (e) => {
+      s.pmx = s.mx; s.pmy = s.my
+      s.mx = e.clientX; s.my = e.clientY
+      s.prevTime = performance.now()
+    }
     const onTouch = (e) => {
       const touch = e.touches[0]
-      if (touch) { s.mx = touch.clientX; s.my = touch.clientY }
+      if (touch) {
+        s.pmx = s.mx; s.pmy = s.my
+        s.mx = touch.clientX; s.my = touch.clientY
+        s.prevTime = performance.now()
+      }
     }
 
     window.addEventListener('mousemove', onMouse, { passive: true })
