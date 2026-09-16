@@ -16,90 +16,73 @@ const QUESTIONS = [
 
 // Physics constants
 const DANGER_RADIUS = 220
-const FLEE_ACCELERATION = 2800    // px/s² — how hard the button pushes away
-const MAX_SPEED = 900             // px/s — terminal velocity
-const FRICTION = 0.92             // per frame velocity multiplier — smooth deceleration
-const MERCY_AFTER = 250           // frames of evasion before surrender (~4s)
+const FLEE_ACCELERATION = 2800
+const MAX_SPEED = 900
+const FRICTION = 0.92
+const MERCY_AFTER = 250
 
-function RunawayButton({ children, onCatch, yesButtonRef }) {
+function RunawayButton({ children, onCatch, placeholderRef }) {
   const btnRef = useRef(null)
   const containerRef = useRef(null)
   const [caught, setCaught] = useState(false)
 
-  // Physics state — mutated in rAF, never triggers re-render
   const physics = useRef({
-    x: 0, y: 0,          // position (top-left of button, relative to container)
-    vx: 0, vy: 0,        // velocity
-    cx: 0, cy: 0,        // last known cursor position (relative to container)
-    active: false,        // is rAF running
-    frameCount: 0,
+    x: 0, y: 0,
+    vx: 0, vy: 0,
+    cx: -1000, cy: -1000,
     animId: null,
+    mercyCount: 0,
+    frameCount: 0,
   })
 
-  // Place button right next to the Yes button on mount
+  // Place button on the empty placeholder slot on mount
   useEffect(() => {
-    const container = containerRef.current
     const btn = btnRef.current
-    if (!container || !btn) return
+    if (!btn || !placeholderRef?.current) return
 
-    let x, y
-    if (yesButtonRef?.current) {
-      const yesRect = yesButtonRef.current.getBoundingClientRect()
-      const cRect = container.getBoundingClientRect()
-      x = yesRect.right - cRect.left + 16
-      y = yesRect.top - cRect.top
-    } else {
-      // fallback: center of viewport
-      const cRect = container.getBoundingClientRect()
-      x = (cRect.width - btn.offsetWidth) / 2
-      y = (cRect.height - btn.offsetHeight) / 2
-    }
-    physics.current.x = x
-    physics.current.y = y
-    btn.style.left = `${x}px`
-    btn.style.top = `${y}px`
-  }, [yesButtonRef])
+    const pRect = placeholderRef.current.getBoundingClientRect()
+    physics.current.x = pRect.left
+    physics.current.y = pRect.top
+    btn.style.left = `${pRect.left}px`
+    btn.style.top = `${pRect.top}px`
+  }, [placeholderRef])
 
   // Main physics loop
   useEffect(() => {
-    const container = containerRef.current
     const btn = btnRef.current
-    if (!container || !btn || caught) return
+    if (!btn || caught) return
     const p = physics.current
 
     let lastTime = null
 
     const tick = (now) => {
       if (!lastTime) lastTime = now
-      const dt = Math.min((now - lastTime) / 1000, 0.05) // cap dt to avoid huge jumps
+      const dt = Math.min((now - lastTime) / 1000, 0.05)
       lastTime = now
 
-      const cRect = container.getBoundingClientRect()
+      const vw = window.innerWidth
+      const vh = window.innerHeight
       const bw = btn.offsetWidth
       const bh = btn.offsetHeight
 
-      // Button center
       const bcx = p.x + bw / 2
       const bcy = p.y + bh / 2
 
-      // Distance to cursor
       const dx = bcx - p.cx
       const dy = bcy - p.cy
       const dist = Math.hypot(dx, dy)
 
       if (dist < DANGER_RADIUS && dist > 0) {
-        // Accelerate away from cursor (normalized direction * acceleration)
         const nx = dx / dist
         const ny = dy / dist
-        // Intensity scales with closeness — closer = more panic
-        const urgency = 1 - (dist / DANGER_RADIUS) // 0..1
+        const urgency = 1 - (dist / DANGER_RADIUS)
         const accel = FLEE_ACCELERATION * (0.6 + urgency * 0.4)
         p.vx += nx * accel * dt
         p.vy += ny * accel * dt
 
         p.frameCount++
-        if (p.frameCount % 5 === 0) { // count every 5th frame for mercy
-          p.mercyCount = (p.mercyCount || 0) + 1
+        if (p.frameCount % 5 === 0) {
+          p.mercyCount++
           if (p.mercyCount >= MERCY_AFTER) {
             setCaught(true)
             return
@@ -107,28 +90,22 @@ function RunawayButton({ children, onCatch, yesButtonRef }) {
         }
       }
 
-      // Apply friction
       p.vx *= FRICTION
       p.vy *= FRICTION
 
-      // Clamp speed
       const speed = Math.hypot(p.vx, p.vy)
       if (speed > MAX_SPEED) {
         p.vx = (p.vx / speed) * MAX_SPEED
         p.vy = (p.vy / speed) * MAX_SPEED
       }
 
-      // Integrate position
       p.x += p.vx * dt
       p.y += p.vy * dt
 
-      // Wrap around viewport edges (pac-man style)
-      if (p.x + bw < 0) p.x = cRect.width
-      else if (p.x > cRect.width) p.x = -bw
-      if (p.y + bh < 0) p.y = cRect.height
-      else if (p.y > cRect.height) p.y = -bh
+      // Wrap around immediately — modular arithmetic, no stuck edges
+      p.x = ((p.x + bw) % vw + vw) % vw - bw
+      p.y = ((p.y + bh) % vh + vh) % vh - bh
 
-      // Apply to DOM directly — no React re-render
       btn.style.left = `${p.x}px`
       btn.style.top = `${p.y}px`
 
@@ -137,19 +114,16 @@ function RunawayButton({ children, onCatch, yesButtonRef }) {
 
     p.animId = requestAnimationFrame(tick)
 
-    // Track cursor
     const onMouse = (e) => {
-      const cRect = container.getBoundingClientRect()
-      p.cx = e.clientX - cRect.left
-      p.cy = e.clientY - cRect.top
+      p.cx = e.clientX
+      p.cy = e.clientY
     }
 
     const onTouch = (e) => {
       const touch = e.touches[0]
       if (!touch) return
-      const cRect = container.getBoundingClientRect()
-      p.cx = touch.clientX - cRect.left
-      p.cy = touch.clientY - cRect.top
+      p.cx = touch.clientX
+      p.cy = touch.clientY
     }
 
     window.addEventListener('mousemove', onMouse, { passive: true })
@@ -169,16 +143,14 @@ function RunawayButton({ children, onCatch, yesButtonRef }) {
   }, [caught, onCatch])
 
   return (
-    <div ref={containerRef} className="runaway-container">
-      <button
-        ref={btnRef}
-        className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
-        style={{ position: 'absolute' }}
-        onClick={handleClick}
-      >
-        {children}
-      </button>
-    </div>
+    <button
+      ref={btnRef}
+      className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
+      style={{ position: 'fixed' }}
+      onClick={handleClick}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -231,7 +203,7 @@ function App() {
   const [answered, setAnswered] = useState(false)
   const [showCelebration, setShowCelebration] = useState(false)
   const [yesClicks, setYesClicks] = useState(0)
-  const yesButtonRef = useRef(null)
+  const placeholderRef = useRef(null)
 
   const handleYes = () => {
     setAnswered(true)
@@ -268,13 +240,21 @@ function App() {
           </div>
         ) : (
           <div className="buttons-row">
-            <button ref={yesButtonRef} className="btn btn-answer btn-yes" onClick={handleYes}>
+            <button className="btn btn-answer btn-yes" onClick={handleYes}>
               Yes! ✅
             </button>
-            <RunawayButton onCatch={handleNoCatch} yesButtonRef={yesButtonRef}>
+            {/* Invisible placeholder that reserves space for No */}
+            <div ref={placeholderRef} className="btn btn-answer btn-placeholder">
               No ❌
-            </RunawayButton>
+            </div>
           </div>
+        )}
+
+        {/* No button lives here — renders as fixed over the placeholder */}
+        {!answered && (
+          <RunawayButton onCatch={handleNoCatch} placeholderRef={placeholderRef}>
+            No ❌
+          </RunawayButton>
         )}
 
         {yesClicks > 0 && (

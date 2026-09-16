@@ -151,20 +151,13 @@ body {
   100% { transform: rotate(0deg); }
 }
 
-/* Arena — the full viewport */
-.runaway-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
+/* Invisible placeholder that reserves space for the runaway button */
+.btn-placeholder {
+  visibility: hidden;
   pointer-events: none;
-  z-index: 0;
 }
 
-.runaway-container .btn-no {
-  pointer-events: auto;
-}
+/* Runaway button is position:fixed, rendered outside the card but starts at placeholder */
 
 /* Answer feedback */
 .answer-response {
