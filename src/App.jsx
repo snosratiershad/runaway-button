@@ -15,15 +15,29 @@ const QUESTIONS = [
 ]
 
 // Physics — cranked up for difficulty
-const DANGER    = 400      // flee trigger radius (px)
-const ACCEL     = 5000     // base flee acceleration (px/s²)
-const MAX_SPEED = 1800     // max button speed (px/s)
-const FRIC      = 0.975    // per-frame friction — long momentum coast
-const MERCY     = 500      // frames before surrender (~8s of evasion)
+const DANGER    = 400
+const ACCEL     = 5000
+const MAX_SPEED = 1800
+const FRIC      = 0.975
+const MERCY     = 500
+
+function isTouchDevice() {
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0
+}
+
+function randomViewportPos(bw, bh) {
+  const pad = 24
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  const x = pad + Math.random() * Math.max(0, vw - bw - pad * 2)
+  const y = pad + Math.random() * Math.max(0, vh - bh - pad * 2)
+  return { x, y }
+}
 
 function RunawayButton({ onCatch, ghostRef }) {
   const btnRef = useRef(null)
   const [caught, setCaught] = useState(false)
+  const isTouch = useRef(isTouchDevice())
 
   const S = useRef({
     x: 0, y: 0,
@@ -33,41 +47,45 @@ function RunawayButton({ onCatch, ghostRef }) {
     prevTime: 0,
     mercy: 0,
     snapped: false,
+    mv: 0, // move count for touch mode
   })
 
-  // Snap button exactly over ghost placeholder using layout coords
+  // Snap button to ghost after the card's slideUp animation (500ms)
   useEffect(() => {
     const ghost = ghostRef?.current
     const btn = btnRef.current
     if (!ghost || !btn) return
 
-    // Use getComputedStyle of the ghost to get exact position
-    const rect = () => ghost.getBoundingClientRect()
+    btn.style.visibility = 'hidden'
+
     const snap = () => {
-      const r = rect()
-      if (r.width === 0 && r.height === 0) return false // not laid out yet
+      const r = ghost.getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) return false
       S.current.x = r.left
       S.current.y = r.top
-      btn.style.transform = 'none'
+      btn.style.position = 'absolute'
       btn.style.left = r.left + 'px'
       btn.style.top = r.top + 'px'
+      btn.style.transform = 'none'
       S.current.snapped = true
       btn.style.visibility = 'visible'
       return true
     }
 
-    btn.style.visibility = 'hidden'
-
-    // Try immediately, then on next frames until layout is ready
-    if (!snap()) {
-      let tries = 0
-      const retry = () => {
-        tries++
-        if (snap() || tries > 10) return
+    // Wait 550ms for the slideUp animation to fully settle (it's 0.5s)
+    const timer = setTimeout(() => {
+      if (!snap()) {
+        let tries = 0
+        const retry = () => {
+          tries++
+          if (snap() || tries > 10) return
+          requestAnimationFrame(retry)
+        }
         requestAnimationFrame(retry)
       }
-      requestAnimationFrame(retry)
-    }
+    }, 550)
+
+    return () => clearTimeout(timer)
   }, [ghostRef])
 
   // Physics loop
@@ -75,14 +93,7 @@ function RunawayButton({ onCatch, ghostRef }) {
     const btn = btnRef.current
     if (!btn || caught) return
     const s = S.current
-
-    // Resume velocity from wherever the button currently is
-    const syncPos = () => {
-      const r = btn.getBoundingClientRect()
-      if (s.snapped && (Math.abs(s.x - r.left) > 2 || Math.abs(s.y - r.top) > 2)) {
-        // Only update if we haven't snapped yet or we're tracking live position
-      }
-    }
+    const mobile = isTouch.current
 
     let last = null
     const tick = (now) => {
@@ -91,15 +102,21 @@ function RunawayButton({ onCatch, ghostRef }) {
       last = now
 
       if (!s.snapped) { s.raf = requestAnimationFrame(tick); return }
+      if (s.mx < -9000) { s.raf = requestAnimationFrame(tick); return }
 
       const vw = window.innerWidth
       const vh = window.innerHeight
       const bw = btn.offsetWidth
       const bh = btn.offsetHeight
 
-      // Don't start physics until mouse has moved (prevents snap reset)
-      if (s.mx < -9000) { s.raf = requestAnimationFrame(tick); return }
+      if (mobile) {
+        // Mobile: touch mode — physics still runs but uses softer flee
+        // On mobile, the touch event itself triggers the respawn separately
+        s.raf = requestAnimationFrame(tick)
+        return
+      }
 
+      // Desktop: full physics
       const cx = s.x + bw / 2
       const cy = s.y + bh / 2
       const dx = cx - s.mx
@@ -111,13 +128,11 @@ function RunawayButton({ onCatch, ghostRef }) {
         const ny = dy / dist
         const urgency = 1 - dist / DANGER
 
-        // Cursor approach speed (px/s)
         const cursorSpeed = Math.sqrt(
           (s.mx - s.pmx) ** 2 + (s.my - s.pmy) ** 2
         ) / Math.max((now - s.prevTime) / 1000, 0.001)
         const cursorFactor = Math.min(cursorSpeed / 1500, 1)
 
-        // Acceleration: base + proximity panic + cursor speed response
         const a = ACCEL * (0.2 + urgency * 0.4 + cursorFactor * 0.4)
         s.vx += nx * a * dt
         s.vy += ny * a * dt
@@ -129,7 +144,6 @@ function RunawayButton({ onCatch, ghostRef }) {
         }
       }
 
-      // Friction + clamp
       s.vx *= FRIC
       s.vy *= FRIC
       const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
@@ -141,15 +155,11 @@ function RunawayButton({ onCatch, ghostRef }) {
       s.x += s.vx * dt
       s.y += s.vy * dt
 
-      // Wrap: reappear opposite side (modular, no sticking)
-      if (s.x + bw < 0)
-        s.x = vw - 4
-      else if (s.x > vw)
-        s.x = -bw + 4
-      if (s.y + bh < 0)
-        s.y = vh - 4
-      else if (s.y > vh)
-        s.y = -bh + 4
+      // Wrap
+      if (s.x + bw < 0)        s.x = vw - 4
+      else if (s.x > vw)       s.x = -bw + 4
+      if (s.y + bh < 0)        s.y = vh - 4
+      else if (s.y > vh)       s.y = -bh + 4
 
       btn.style.left = s.x + 'px'
       btn.style.top = s.y + 'px'
@@ -160,29 +170,54 @@ function RunawayButton({ onCatch, ghostRef }) {
 
     s.raf = requestAnimationFrame(tick)
 
+    // Desktop: mouse tracking
     const onMouse = (e) => {
       s.pmx = s.mx; s.pmy = s.my
       s.mx = e.clientX; s.my = e.clientY
       s.prevTime = performance.now()
     }
-    const onTouch = (e) => {
+
+    // Mobile: touch events trigger instant respawn
+    const onTouchStart = (e) => {
+      if (!e.touches[0]) return
       const touch = e.touches[0]
-      if (touch) {
-        s.pmx = s.mx; s.pmy = s.my
-        s.mx = touch.clientX; s.my = touch.clientY
-        s.prevTime = performance.now()
+      const bw = btn.offsetWidth
+      const bh = btn.offsetHeight
+
+      // Check if touch is on or near the button
+      const dx = (s.x + bw / 2) - touch.clientX
+      const dy = (s.y + bh / 2) - touch.clientY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      if (dist < 120) {  // finger close to button
+        s.mv++
+        if (s.mv >= MERCY) {
+          setCaught(true)
+          return
+        }
+        // Respawn at a random safe position
+        const pos = randomViewportPos(bw, bh)
+        s.x = pos.x
+        s.y = pos.y
+        btn.style.left = pos.x + 'px'
+        btn.style.top = pos.y + 'px'
+      } else {
+        // Update tracked position even if not near
+        s.mx = touch.clientX
+        s.my = touch.clientY
       }
     }
 
-    window.addEventListener('mousemove', onMouse, { passive: true })
-    window.addEventListener('touchstart', onTouch, { passive: true })
-    window.addEventListener('touchmove', onTouch, { passive: true })
+    if (mobile) {
+      window.addEventListener('touchstart', onTouchStart, { passive: true })
+    } else {
+      window.addEventListener('mousemove', onMouse, { passive: true })
+    }
 
     return () => {
       cancelAnimationFrame(s.raf)
       window.removeEventListener('mousemove', onMouse)
-      window.removeEventListener('touchstart', onTouch)
-      window.removeEventListener('touchmove', onTouch)
+      window.removeEventListener('touchstart', onTouchStart)
     }
   }, [caught])
 
@@ -192,7 +227,6 @@ function RunawayButton({ onCatch, ghostRef }) {
     <button
       ref={btnRef}
       className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
-      style={{ position: 'absolute' }}
       onClick={onClick}
     >
       No ❌
@@ -238,7 +272,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Fixed overlay — button roams the whole viewport */}
       <div className="runaway-overlay">
         {!answered && <RunawayButton onCatch={() => setDone(true)} ghostRef={ghostRef} />}
       </div>
