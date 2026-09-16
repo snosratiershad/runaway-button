@@ -52,8 +52,11 @@ function RunawayButton({ onCatch, ghostRef }) {
       btn.style.left = r.left + 'px'
       btn.style.top = r.top + 'px'
       S.current.snapped = true
+      btn.style.visibility = 'visible'
       return true
     }
+
+    btn.style.visibility = 'hidden'
 
     // Try immediately, then on next frames until layout is ready
     if (!snap()) {
@@ -189,7 +192,7 @@ function RunawayButton({ onCatch, ghostRef }) {
     <button
       ref={btnRef}
       className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
-      style={{ position: 'absolute', visibility: S.current.snapped ? 'visible' : 'hidden' }}
+      style={{ position: 'absolute' }}
       onClick={onClick}
     >
       No ❌
