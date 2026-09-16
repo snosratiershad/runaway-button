@@ -35,21 +35,22 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
   min-height: 100vh;
   padding: 20px;
+  padding-top: 28px;
 }
 
 .card {
   background: var(--card-bg);
   border-radius: 24px;
-  padding: 48px 40px;
+  padding: 40px 40px 28px;
   max-width: 540px;
   width: 100%;
   box-shadow: var(--shadow-lg);
   text-align: center;
   backdrop-filter: blur(10px);
   animation: slideUp 0.5s ease-out;
+  z-index: 10;
 }
 
 @keyframes slideUp {
@@ -67,7 +68,7 @@ body {
   font-size: 1.75rem;
   font-weight: 800;
   color: var(--text-dark);
-  margin-bottom: 36px;
+  margin-bottom: 28px;
   line-height: 1.4;
   animation: fadeIn 0.8s ease-out;
 }
@@ -81,37 +82,39 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 24px;
-  min-height: 200px;
+  gap: 32px;
+  min-height: 56px;
   position: relative;
 }
 
-.btn {
+/* Shared button size — identical shape for both */
+.btn-answer {
+  min-width: 160px;
+  padding: 18px 44px;
+  font-size: 1.25rem;
+  font-weight: 700;
   border: none;
   border-radius: 16px;
-  padding: 16px 36px;
-  font-size: 1.1rem;
-  font-weight: 600;
-  font-family: inherit;
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  font-family: inherit;
   outline: none;
   user-select: none;
   -webkit-user-select: none;
   -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  text-align: center;
 }
 
-.btn:active {
+.btn-answer:active {
   transform: scale(0.95);
 }
 
+/* Yes button — fixed in the card */
 .btn-yes {
   background: var(--yes-color);
   color: white;
   box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
-  font-size: 1.3rem;
-  padding: 20px 48px;
-  z-index: 2;
 }
 
 .btn-yes:hover {
@@ -120,13 +123,12 @@ body {
   transform: scale(1.05);
 }
 
+/* No button — roams the page */
 .btn-no {
   background: var(--no-color);
   color: white;
   box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
-  font-size: 1.3rem;
-  padding: 20px 48px;
-  white-space: nowrap;
+  z-index: 100;
 }
 
 .btn-no:hover {
@@ -138,6 +140,7 @@ body {
   background: #94a3b8 !important;
   box-shadow: 0 4px 15px rgba(148, 163, 184, 0.4) !important;
   animation: wobble 0.5s ease;
+  cursor: pointer;
 }
 
 @keyframes wobble {
@@ -148,16 +151,22 @@ body {
   100% { transform: rotate(0deg); }
 }
 
+/* Arena — the full viewport */
 .runaway-container {
-  position: relative;
-  width: 100%;
-  height: 80vh;
-  min-height: 400px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 0;
 }
 
+.runaway-container .btn-no {
+  pointer-events: auto;
+}
+
+/* Answer feedback */
 .answer-response {
   animation: popIn 0.4s ease-out;
   padding: 20px 0;
@@ -193,18 +202,20 @@ body {
 }
 
 .score {
-  margin-top: 24px;
+  margin-top: 20px;
   font-size: 0.95rem;
   color: var(--text-muted);
   font-weight: 600;
 }
 
+/* Footer hint */
 .footer {
-  margin-top: 32px;
+  margin-top: 24px;
   color: rgba(255, 255, 255, 0.8);
   font-size: 0.9rem;
   text-align: center;
   animation: pulse 2s ease-in-out infinite;
+  z-index: 10;
 }
 
 @keyframes pulse {
@@ -212,7 +223,7 @@ body {
   50% { opacity: 1; }
 }
 
-/* Celebration */
+/* Celebration screen */
 .celebration {
   display: flex;
   flex-direction: column;
@@ -250,7 +261,13 @@ body {
   color: var(--bg-gradient-start);
   padding: 14px 36px;
   font-size: 1.1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 16px;
+  cursor: pointer;
+  font-family: inherit;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .btn-restart:hover {
@@ -288,24 +305,21 @@ body {
   }
 }
 
-/* Mobile responsiveness */
+/* Mobile */
 @media (max-width: 600px) {
   .card {
-    padding: 32px 20px;
+    padding: 28px 18px 20px;
   }
 
   .question {
-    font-size: 1.3rem;
+    font-size: 1.25rem;
+    margin-bottom: 20px;
   }
 
-  .btn-yes, .btn-no {
-    font-size: 1.1rem;
-    padding: 16px 32px;
-  }
-
-  .runaway-container {
-    width: 160px;
-    height: 160px;
+  .btn-answer {
+    min-width: 120px;
+    padding: 14px 28px;
+    font-size: 1.05rem;
   }
 
   .celebration h1 {

@@ -14,137 +14,146 @@ const QUESTIONS = [
   "Do you think cats are cute?",
 ]
 
-const DANGER_RADIUS = 180   // px – flee when cursor is this close
-const MERCY_AFTER = 15      // moves before the button surrenders
-const FLEE_SPEED = 0        // ms transition – 0 = instant teleport
+// Physics constants
+const DANGER_RADIUS = 220
+const FLEE_ACCELERATION = 2800    // px/s² — how hard the button pushes away
+const MAX_SPEED = 900             // px/s — terminal velocity
+const FRICTION = 0.92             // per frame velocity multiplier — smooth deceleration
+const MERCY_AFTER = 250           // frames of evasion before surrender (~4s)
 
-function fleePosition(btnRect, containerRect, cursorX, cursorY) {
-  const pad = 16
-  const bw = btnRect.width
-  const bh = btnRect.height
-  const cw = containerRect.width
-  const ch = containerRect.height
-
-  // Compute vector FROM cursor TO button center, then run further along it
-  const btnCX = btnRect.left + bw / 2 - containerRect.left
-  const btnCY = btnRect.top + bh / 2 - containerRect.top
-  let dx = btnCX - cursorX
-  let dy = btnCY - cursorY
-  const dist = Math.hypot(dx, dy) || 1
-  dx /= dist
-  dy /= dist
-
-  // Flee distance: at least 60% of container dimension, randomised
-  const magnitude = Math.max(cw, ch) * (0.5 + Math.random() * 0.4)
-  let newX = btnCX + dx * magnitude
-  let newY = btnCY + dy * magnitude
-
-  // Clamp inside the container
-  newX = Math.max(pad, Math.min(cw - bw - pad, newX))
-  newY = Math.max(pad, Math.min(ch - bh - pad, newY))
-
-  // If barely moved, just pick a random opposite corner
-  const moved = Math.hypot(newX - (btnRect.left - containerRect.left), newY - (btnRect.top - containerRect.top))
-  if (moved < 60) {
-    newX = cursorX - containerRect.left < cw / 2
-      ? cw * 0.55 + Math.random() * cw * 0.3
-      : pad + Math.random() * cw * 0.3
-    newY = cursorY - containerRect.top < ch / 2
-      ? ch * 0.55 + Math.random() * ch * 0.3
-      : pad + Math.random() * ch * 0.3
-    newX = Math.max(pad, Math.min(cw - bw - pad, newX))
-    newY = Math.max(pad, Math.min(ch - bh - pad, newY))
-  }
-
-  return { x: newX, y: newY }
-}
-
-function RunawayButton({ children, onCatch }) {
+function RunawayButton({ children, onCatch, initialCenterX, initialCenterY }) {
   const btnRef = useRef(null)
   const containerRef = useRef(null)
-  const moveCountRef = useRef(0)
-  const posRef = useRef({ x: 0, y: 0 })          // track current pos without re-renders
-  const [style, setStyle] = useState({})
   const [caught, setCaught] = useState(false)
 
-  // Hovering over the container area triggers proximity tracking
+  // Physics state — mutated in rAF, never triggers re-render
+  const physics = useRef({
+    x: 0, y: 0,          // position (top-left of button, relative to container)
+    vx: 0, vy: 0,        // velocity
+    cx: 0, cy: 0,        // last known cursor position (relative to container)
+    active: false,        // is rAF running
+    frameCount: 0,
+    animId: null,
+  })
+
+  // Place button at center once we know container dimensions
   useEffect(() => {
     const container = containerRef.current
-    if (!container) return
+    const btn = btnRef.current
+    if (!container || !btn) return
 
-    const handleMove = (e) => {
-      if (caught) return
-      const btn = btnRef.current
-      if (!btn) return
+    const cRect = container.getBoundingClientRect()
+    const bRect = btn.getBoundingClientRect()
+    const x = (cRect.width - bRect.width) / 2
+    const y = (cRect.height - bRect.height) / 2
+    physics.current.x = x
+    physics.current.y = y
+    btn.style.left = `${x}px`
+    btn.style.top = `${y}px`
+  }, [])
 
-      const bRect = btn.getBoundingClientRect()
+  // Main physics loop
+  useEffect(() => {
+    const container = containerRef.current
+    const btn = btnRef.current
+    if (!container || !btn || caught) return
+    const p = physics.current
+
+    let lastTime = null
+
+    const tick = (now) => {
+      if (!lastTime) lastTime = now
+      const dt = Math.min((now - lastTime) / 1000, 0.05) // cap dt to avoid huge jumps
+      lastTime = now
+
       const cRect = container.getBoundingClientRect()
+      const bw = btn.offsetWidth
+      const bh = btn.offsetHeight
 
-      // cursor pos relative to container
-      const cx = e.clientX - cRect.left
-      const cy = e.clientY - cRect.top
+      // Button center
+      const bcx = p.x + bw / 2
+      const bcy = p.y + bh / 2
 
-      // button center relative to container
-      const bx = bRect.left - cRect.left + bRect.width / 2
-      const by = bRect.top - cRect.top + bRect.height / 2
+      // Distance to cursor
+      const dx = bcx - p.cx
+      const dy = bcy - p.cy
+      const dist = Math.hypot(dx, dy)
 
-      const dist = Math.hypot(cx - bx, cy - by)
-      if (dist > DANGER_RADIUS) return           // too far, don't move
+      if (dist < DANGER_RADIUS && dist > 0) {
+        // Accelerate away from cursor (normalized direction * acceleration)
+        const nx = dx / dist
+        const ny = dy / dist
+        // Intensity scales with closeness — closer = more panic
+        const urgency = 1 - (dist / DANGER_RADIUS) // 0..1
+        const accel = FLEE_ACCELERATION * (0.6 + urgency * 0.4)
+        p.vx += nx * accel * dt
+        p.vy += ny * accel * dt
 
-      moveCountRef.current += 1
-      if (moveCountRef.current >= MERCY_AFTER) {
-        setCaught(true)
-        setStyle({})
-        return
+        p.frameCount++
+        if (p.frameCount % 5 === 0) { // count every 5th frame for mercy
+          p.mercyCount = (p.mercyCount || 0) + 1
+          if (p.mercyCount >= MERCY_AFTER) {
+            setCaught(true)
+            return
+          }
+        }
       }
 
-      const pos = fleePosition(bRect, cRect, e.clientX, e.clientY)
-      posRef.current = pos
-      setStyle({
-        position: 'absolute',
-        left: `${pos.x}px`,
-        top: `${pos.y}px`,
-        transition: `left ${FLEE_SPEED}ms linear, top ${FLEE_SPEED}ms linear`,
-      })
+      // Apply friction
+      p.vx *= FRICTION
+      p.vy *= FRICTION
+
+      // Clamp speed
+      const speed = Math.hypot(p.vx, p.vy)
+      if (speed > MAX_SPEED) {
+        p.vx = (p.vx / speed) * MAX_SPEED
+        p.vy = (p.vy / speed) * MAX_SPEED
+      }
+
+      // Integrate position
+      p.x += p.vx * dt
+      p.y += p.vy * dt
+
+      // Bounce off container walls
+      const pad = 8
+      if (p.x < pad) { p.x = pad; p.vx = Math.abs(p.vx) * 0.6 }
+      if (p.y < pad) { p.y = pad; p.vy = Math.abs(p.vy) * 0.6 }
+      if (p.x > cRect.width - bw - pad) { p.x = cRect.width - bw - pad; p.vx = -Math.abs(p.vx) * 0.6 }
+      if (p.y > cRect.height - bh - pad) { p.y = cRect.height - bh - pad; p.vy = -Math.abs(p.vy) * 0.6 }
+
+      // Apply to DOM directly — no React re-render
+      btn.style.left = `${p.x}px`
+      btn.style.top = `${p.y}px`
+
+      p.animId = requestAnimationFrame(tick)
     }
 
-    // Touch: flee from the finger before the tap registers
-    const handleTouch = (e) => {
-      if (caught) return
+    p.animId = requestAnimationFrame(tick)
+
+    // Track cursor
+    const onMouse = (e) => {
+      const cRect = container.getBoundingClientRect()
+      p.cx = e.clientX - cRect.left
+      p.cy = e.clientY - cRect.top
+    }
+
+    const onTouch = (e) => {
       const touch = e.touches[0]
       if (!touch) return
-      const btn = btnRef.current
-      if (!btn) return
-
-      e.preventDefault()
-
-      const bRect = btn.getBoundingClientRect()
       const cRect = container.getBoundingClientRect()
-
-      moveCountRef.current += 1
-      if (moveCountRef.current >= MERCY_AFTER) {
-        setCaught(true)
-        setStyle({})
-        return
-      }
-
-      const pos = fleePosition(bRect, cRect, touch.clientX, touch.clientY)
-      posRef.current = pos
-      setStyle({
-        position: 'absolute',
-        left: `${pos.x}px`,
-        top: `${pos.y}px`,
-        transition: `left ${FLEE_SPEED}ms linear, top ${FLEE_SPEED}ms linear`,
-      })
+      p.cx = touch.clientX - cRect.left
+      p.cy = touch.clientY - cRect.top
     }
 
-    container.addEventListener('mousemove', handleMove, { passive: true })
-    container.addEventListener('touchmove', handleTouch, { passive: false })
-    container.addEventListener('touchstart', handleTouch, { passive: false })
+    window.addEventListener('mousemove', onMouse, { passive: true })
+    window.addEventListener('touchmove', onTouch, { passive: true })
+    window.addEventListener('touchstart', onTouch, { passive: true })
+
     return () => {
-      container.removeEventListener('mousemove', handleMove)
-      container.removeEventListener('touchmove', handleTouch)
-      container.removeEventListener('touchstart', handleTouch)
+      cancelAnimationFrame(p.animId)
+      window.removeEventListener('mousemove', onMouse)
+      window.removeEventListener('touchmove', onTouch)
+      window.removeEventListener('touchstart', onTouch)
     }
   }, [caught])
 
@@ -156,8 +165,8 @@ function RunawayButton({ children, onCatch }) {
     <div ref={containerRef} className="runaway-container">
       <button
         ref={btnRef}
-        className={`btn btn-no ${caught ? 'btn-caught' : ''}`}
-        style={style}
+        className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
+        style={{ position: 'absolute' }}
         onClick={handleClick}
       >
         {children}
@@ -251,7 +260,7 @@ function App() {
           </div>
         ) : (
           <div className="buttons-row">
-            <button className="btn btn-yes" onClick={handleYes}>
+            <button className="btn btn-answer btn-yes" onClick={handleYes}>
               Yes! ✅
             </button>
             <RunawayButton onCatch={handleNoCatch}>
