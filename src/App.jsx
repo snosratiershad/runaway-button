@@ -14,12 +14,12 @@ const QUESTIONS = [
   "Do you think cats are cute?",
 ]
 
-// Physics
-const DANGER    = 300      // flee trigger radius (px)
-const ACCEL     = 2800     // base flee acceleration (px/s²)
-const MAX_SPEED = 1200     // max button speed (px/s)
-const FRIC      = 0.965    // per-frame friction — high = long coasting
-const MERCY     = 300      // frames before surrender
+// Physics — cranked up for difficulty
+const DANGER    = 400      // flee trigger radius (px)
+const ACCEL     = 5000     // base flee acceleration (px/s²)
+const MAX_SPEED = 1800     // max button speed (px/s)
+const FRIC      = 0.975    // per-frame friction — long momentum coast
+const MERCY     = 500      // frames before surrender (~8s of evasion)
 
 function RunawayButton({ onCatch, ghostRef }) {
   const btnRef = useRef(null)
@@ -27,27 +27,44 @@ function RunawayButton({ onCatch, ghostRef }) {
 
   const S = useRef({
     x: 0, y: 0,
-    vx: 0, vy: 0,           // button velocity
-    mx: -9999, my: -9999,   // current mouse pos
-    pmx: -9999, pmy: -9999, // previous mouse pos (for velocity)
-    prevTime: 0,            // last mouse event time
+    vx: 0, vy: 0,
+    mx: -9999, my: -9999,
+    pmx: -9999, pmy: -9999,
+    prevTime: 0,
     mercy: 0,
-    started: false,
+    snapped: false,
   })
 
-  // Snap button to ghost placeholder on mount
+  // Snap button exactly over ghost placeholder using layout coords
   useEffect(() => {
     const ghost = ghostRef?.current
     const btn = btnRef.current
     if (!ghost || !btn) return
-    requestAnimationFrame(() => {
-      const r = ghost.getBoundingClientRect()
+
+    // Use getComputedStyle of the ghost to get exact position
+    const rect = () => ghost.getBoundingClientRect()
+    const snap = () => {
+      const r = rect()
+      if (r.width === 0 && r.height === 0) return false // not laid out yet
       S.current.x = r.left
       S.current.y = r.top
+      btn.style.transform = 'none'
       btn.style.left = r.left + 'px'
       btn.style.top = r.top + 'px'
-      S.current.started = true
-    })
+      S.current.snapped = true
+      return true
+    }
+
+    // Try immediately, then on next frames until layout is ready
+    if (!snap()) {
+      let tries = 0
+      const retry = () => {
+        tries++
+        if (snap() || tries > 10) return
+        requestAnimationFrame(retry)
+      }
+      requestAnimationFrame(retry)
+    }
   }, [ghostRef])
 
   // Physics loop
@@ -56,18 +73,29 @@ function RunawayButton({ onCatch, ghostRef }) {
     if (!btn || caught) return
     const s = S.current
 
+    // Resume velocity from wherever the button currently is
+    const syncPos = () => {
+      const r = btn.getBoundingClientRect()
+      if (s.snapped && (Math.abs(s.x - r.left) > 2 || Math.abs(s.y - r.top) > 2)) {
+        // Only update if we haven't snapped yet or we're tracking live position
+      }
+    }
+
     let last = null
     const tick = (now) => {
       if (last === null) { last = now; s.raf = requestAnimationFrame(tick); return }
       const dt = Math.min((now - last) / 1000, 0.05)
       last = now
 
-      if (!s.started) { s.raf = requestAnimationFrame(tick); return }
+      if (!s.snapped) { s.raf = requestAnimationFrame(tick); return }
 
       const vw = window.innerWidth
       const vh = window.innerHeight
       const bw = btn.offsetWidth
       const bh = btn.offsetHeight
+
+      // Don't start physics until mouse has moved (prevents snap reset)
+      if (s.mx < -9000) { s.raf = requestAnimationFrame(tick); return }
 
       const cx = s.x + bw / 2
       const cy = s.y + bh / 2
@@ -80,15 +108,14 @@ function RunawayButton({ onCatch, ghostRef }) {
         const ny = dy / dist
         const urgency = 1 - dist / DANGER
 
-        // Cursor speed — how fast the user is approaching
+        // Cursor approach speed (px/s)
         const cursorSpeed = Math.sqrt(
           (s.mx - s.pmx) ** 2 + (s.my - s.pmy) ** 2
         ) / Math.max((now - s.prevTime) / 1000, 0.001)
-        // Normalize cursor speed: 0 at rest, ~1 at fast flick (2000+ px/s)
-        const cursorFactor = Math.min(cursorSpeed / 2000, 1)
+        const cursorFactor = Math.min(cursorSpeed / 1500, 1)
 
-        // Acceleration scales with proximity AND cursor approach speed
-        const a = ACCEL * (0.3 + urgency * 0.4 + cursorFactor * 0.3)
+        // Acceleration: base + proximity panic + cursor speed response
+        const a = ACCEL * (0.2 + urgency * 0.4 + cursorFactor * 0.4)
         s.vx += nx * a * dt
         s.vy += ny * a * dt
 
@@ -99,6 +126,7 @@ function RunawayButton({ onCatch, ghostRef }) {
         }
       }
 
+      // Friction + clamp
       s.vx *= FRIC
       s.vy *= FRIC
       const spd = Math.sqrt(s.vx * s.vx + s.vy * s.vy)
@@ -110,7 +138,7 @@ function RunawayButton({ onCatch, ghostRef }) {
       s.x += s.vx * dt
       s.y += s.vy * dt
 
-      // Wrap: as soon as trailing edge passes boundary, reappear on other side
+      // Wrap: reappear opposite side (modular, no sticking)
       if (s.x + bw < 0)
         s.x = vw - 4
       else if (s.x > vw)
@@ -122,6 +150,8 @@ function RunawayButton({ onCatch, ghostRef }) {
 
       btn.style.left = s.x + 'px'
       btn.style.top = s.y + 'px'
+      btn.style.transform = 'none'
+
       s.raf = requestAnimationFrame(tick)
     }
 
@@ -159,7 +189,7 @@ function RunawayButton({ onCatch, ghostRef }) {
     <button
       ref={btnRef}
       className={`btn btn-answer btn-no ${caught ? 'btn-caught' : ''}`}
-      style={{ position: 'absolute' }}
+      style={{ position: 'absolute', visibility: S.current.snapped ? 'visible' : 'hidden' }}
       onClick={onClick}
     >
       No ❌
@@ -205,7 +235,7 @@ export default function App() {
 
   return (
     <div className="app">
-      {/* Fixed overlay — button roams the whole viewport from here */}
+      {/* Fixed overlay — button roams the whole viewport */}
       <div className="runaway-overlay">
         {!answered && <RunawayButton onCatch={() => setDone(true)} ghostRef={ghostRef} />}
       </div>
